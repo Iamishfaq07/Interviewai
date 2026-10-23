@@ -1,0 +1,13 @@
+import {test,after} from 'node:test';
+import assert from 'node:assert/strict';
+import {demoPlan,validateInput} from '../lib.js';
+import {server} from '../server.js';
+const jd='React Developer\nWe need a developer with React, TypeScript and SQL experience to build accessible interfaces and collaborate with product teams.';
+test('demo extracts JD skills and honors level and count',()=>{const p=demoPlan({jd,level:'Senior',count:12});assert.equal(p.questions.length,12);assert.deepEqual(p.skills,['TypeScript','React','SQL']);assert.equal(new Set(p.questions.map(q=>q.category)).size,4);assert.ok(p.questions.every(q=>q.difficulty==='Hard'));assert.equal(new Set(p.questions.map(q=>q.question)).size,12);});
+test('input rejects short JD and unsupported options',()=>{assert.throws(()=>validateInput({jd:'short',level:'Senior',count:12}));assert.throws(()=>validateInput({jd,level:'invalid',count:12}));assert.throws(()=>validateInput({jd,level:'Senior',count:1000}));assert.equal(validateInput({jd,level:'Junior',count:8}).count,8);});
+await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+after(()=>new Promise(resolve=>server.close(resolve)));
+const base=`http://127.0.0.1:${server.address().port}`;
+test('HTTP serves app without exposing source or configuration',async()=>{const r=await fetch(base);assert.equal(r.status,200);assert.match(await r.text(),/interviewai/i);for(const path of ['/.env','/server.js','/../package.json'])assert.equal((await fetch(base+path)).status,404);});
+test('HTTP validates requests and rejects foreign origin',async()=>{const post=(data,headers={})=>fetch(base+'/api/generate',{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(data)});assert.equal((await post({jd:'bad'})).status,400);assert.equal((await post({jd,level:'Junior',count:8},{Origin:'https://foreign.example'})).status,403);if(!process.env.OPENAI_API_KEY){const r=await post({jd,level:'Junior',count:8});assert.equal(r.status,200);const p=await r.json();assert.equal(p.mode,'demo');assert.equal(p.questions.length,8);}});
+test('feedback rejects empty answer and labels demo as unscored',async()=>{const post=answer=>fetch(base+'/api/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jd,question:'Describe React',answer})});assert.equal((await post('')).status,400);if(!process.env.OPENAI_API_KEY){const r=await post('I worked on a React project and improved the user interface.');assert.equal(r.status,200);const f=await r.json();assert.equal(f.mode,'demo');assert.match(f.improvements,/cannot assess/);}});
